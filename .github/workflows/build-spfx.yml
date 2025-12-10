@@ -1,0 +1,25 @@
+
+# .github/workflows/build-spfx.yml
+name: Build SPFx package
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-sppkg:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'     # SPFx 1.21 なら Node 22
+      - run: npm ci
+      - run: npm install -g gulp-cli
+      - run: gulp bundle --ship
+      - run: gulp package-solution --ship
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sppkg
+          path: '**/*.sppkg'
+
