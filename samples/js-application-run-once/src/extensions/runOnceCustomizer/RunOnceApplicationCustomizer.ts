@@ -1,27 +1,50 @@
 
-# 1) 元のモノレポを履歴やブロブを極力落とさず取得（no-checkout）
-git clone --no-checkout --filter=tree:0 https://github.com/pnp/sp-dev-fx-extensions.git
-cd sp-dev-fx-extensions
+// src/extensions/autoReload/AutoReloadApplicationCustomizer.ts
+import { BaseApplicationCustomizer } from '@microsoft/sp-application-base';
+import { SPHttpClient, SPHttpClientResponse } from '@microsoft/sp-http';
 
-# 2) sparse-checkout を初期化し、取り出したいサンプルパスを指定
-git sparse-checkout init --cone
-git sparse-checkout set samples/js-application-run-once   # ←ここを目的のサンプルパスに
+export interface IProps {
+  listTitle: string;      // 対象リストの表示名
+  intervalMs?: number;    // 監視間隔（既定 3000ms）
+}
 
-# 3) 対象ブランチをチェックアウト（例：main）
-git checkout main
+export default class AutoReloadApplicationCustomizer
+  extends BaseApplicationCustomizer<IProps> {
 
-# 4) 取り出したサンプルを、独立した新規フォルダへコピー（あるいは移動）
-#   ※WindowsならエクスプローラーでコピーでもOK
-mkdir ../my-auto-reload-ext
-cp -r samples/js-application-run-once/* ../my-auto-reload-ext/
+  private timer?: number;
+  private last?: string;
 
-# 5) そのフォルダを新規Gitリポジトリとして初期化＆コミット
-cd ../my-auto-reload-ext
-git init
-git add .
-git commit -m "Import sample js-application-run-once from pnp/sp-dev-fx-extensions"
+  public async onInit(): Promise<void> {
+    const interval = this.properties.intervalMs ?? 3000;
+    await this.check();
+    this.timer = window.setInterval(() => this.check(), interval);
+    return Promise.resolve();
+  }
 
-# 6) GitHubで事前に作った空のリポジトリを origin に設定してPush
-git branch -M main
-git remote add origin https://github.com/<your-account>/<your-repo>.git
-git push -u origin main
+  private async check(): Promise<void> {
+    const list = this.properties.listTitle;
+    if (!list) return;
+
+    const url =
+      `${this.context.pageContext.web.absoluteUrl}` +
+      `/_api/web/lists/getByTitle('${encodeURIComponent(list)}')?` +
+      `?$select=LastItemUserModifiedDate`;
+
+    const res: SPHttpClientResponse =
+      await this.context.spHttpClient.get(url, SPHttpClient.configurations.v1,
+        { headers: [['accept', 'application/json;odata=nometadata']] });
+
+    if (!res.ok) return;
+    const data = await res.json();
+    const current: string | undefined = data?.LastItemUserModifiedDate;
+
+    // 差分検知でリロード（タブが前面のときだけ）
+    if (current && this.last && current !== this.last) {
+      if (document.visibilityState === 'visible') location.reload();
+    }
+    if (current) this.last = current;
+  }
+
+  public onDispose(): void {
+    if (this.timer) window.clearInterval(this.timer);
+  }
